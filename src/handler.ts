@@ -30,9 +30,23 @@ const DEFAULT_CORS_ORIGINS = [
 /** Lightweight Zod-shape introspection — mirrors the legacy connector pattern
  * so consumers don't need to add `zod-to-json-schema` as a dep. */
 interface ZodLike {
-  _def?: { typeName?: string; description?: string };
+  _def?: {
+    typeName?: string;
+    description?: string;
+    /** ZodArray: element schema. ZodOptional/ZodDefault: inner schema. */
+    type?: ZodLike;
+    innerType?: ZodLike;
+  };
   description?: string;
-  shape?: Record<string, ZodLike>;
+  shape?: Record<string, ZodLike> | (() => Record<string, ZodLike>);
+}
+
+interface JsonSchemaNode {
+  type: string;
+  description?: string;
+  items?: JsonSchemaNode;
+  properties?: Record<string, JsonSchemaNode>;
+  required?: string[];
 }
 
 export interface ToolHandler {
@@ -208,22 +222,72 @@ export function createMcpApp<E extends KitEnv = KitEnv>(
   return app;
 }
 
-function zodShapeToJsonSchema(schema: ZodLike): {
-  type: 'object';
-  properties: Record<string, { type: string; description?: string }>;
-  required: string[];
-} {
-  const properties: Record<string, { type: string; description?: string }> = {};
-  const required: string[] = [];
+function resolveShape(schema: ZodLike): Record<string, ZodLike> | null {
   const shape = schema?.shape;
-  if (shape && typeof shape === 'object') {
+  if (!shape) return null;
+  if (typeof shape === 'function') {
+    try {
+      return shape();
+    } catch {
+      return null;
+    }
+  }
+  if (typeof shape === 'object') return shape;
+  return null;
+}
+
+function zodNodeToJsonSchema(node: ZodLike): JsonSchemaNode {
+  const typeName = node?._def?.typeName;
+
+  // Unwrap ZodOptional / ZodDefault — describe the inner type, optionality is
+  // tracked at the parent level via the `required` array.
+  if (typeName === 'ZodOptional' || typeName === 'ZodDefault') {
+    const inner = node._def?.innerType;
+    if (inner) {
+      const innerSchema = zodNodeToJsonSchema(inner);
+      const description = node.description ?? node._def?.description;
+      if (description && !innerSchema.description) innerSchema.description = description;
+      return innerSchema;
+    }
+  }
+
+  const description = node?.description ?? node?._def?.description;
+  const result: JsonSchemaNode = { type: zodTypeNameToJsonType(typeName) };
+  if (description) result.description = description;
+
+  if (typeName === 'ZodArray') {
+    const elementSchema = node._def?.type;
+    result.items = elementSchema
+      ? zodNodeToJsonSchema(elementSchema)
+      : { type: 'string' };
+  } else if (typeName === 'ZodObject') {
+    const inner = resolveShape(node);
+    if (inner) {
+      const properties: Record<string, JsonSchemaNode> = {};
+      const required: string[] = [];
+      for (const [key, value] of Object.entries(inner)) {
+        properties[key] = zodNodeToJsonSchema(value);
+        const childTypeName = value?._def?.typeName;
+        if (childTypeName && childTypeName !== 'ZodOptional' && childTypeName !== 'ZodDefault') {
+          required.push(key);
+        }
+      }
+      result.properties = properties;
+      result.required = required;
+    }
+  }
+
+  return result;
+}
+
+function zodShapeToJsonSchema(schema: ZodLike): JsonSchemaNode {
+  const properties: Record<string, JsonSchemaNode> = {};
+  const required: string[] = [];
+  const shape = resolveShape(schema);
+  if (shape) {
     for (const [key, value] of Object.entries(shape)) {
+      properties[key] = zodNodeToJsonSchema(value);
       const typeName = value?._def?.typeName;
-      const description = value?.description ?? value?._def?.description;
-      const type = zodTypeNameToJsonType(typeName);
-      const prop: { type: string; description?: string } = { type };
-      if (description) prop.description = description;
-      properties[key] = prop;
       if (typeName && typeName !== 'ZodOptional' && typeName !== 'ZodDefault') {
         required.push(key);
       }
