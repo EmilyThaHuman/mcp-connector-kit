@@ -1,0 +1,35 @@
+{
+  "name": "@zerotwo/mcp-connector-kit",
+  "version": "0.1.0",
+  "description": "Shared kit for ZeroTwo remote MCP connectors. Verifies JWTs minted by ZeroTwoApi, fetches upstream OAuth tokens via the internal callback, and adapts MCP servers to Cloudflare Workers.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": ["mcp", "model-context-protocol", "cloudflare-workers", "zerotwo"],
+  "private": true,
+  "peerDependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "hono": "^4.0.0"
+  },
+  "dependencies": {
+    "jose": "^5.9.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240909.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "hono": "^4.6.3",
+    "typescript": "^5.6.0"
+  }
+}
