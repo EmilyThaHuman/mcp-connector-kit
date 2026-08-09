@@ -24,5 +24,6 @@ export {
 export {
   createMcpApp,
   type CreateMcpAppOptions,
+  type ToolAnnotations,
   type ToolHandler,
 } from './handler.js';

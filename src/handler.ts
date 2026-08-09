@@ -42,19 +42,31 @@ interface ZodLike {
 }
 
 interface JsonSchemaNode {
-  type: string;
+  type?: string;
   description?: string;
   items?: JsonSchemaNode;
   properties?: Record<string, JsonSchemaNode>;
   required?: string[];
+  [key: string]: unknown;
+}
+
+export interface ToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
 }
 
 export interface ToolHandler {
-  /** Canonical name, e.g. `mcp__gmail__send_email`. */
+  /** Canonical name, e.g. `send_email`. */
   name: string;
   description: string;
-  /** A Zod schema (typed loosely so the kit stays zod-free). */
-  inputSchema: ZodLike;
+  /** A Zod schema or an authoritative JSON Schema object. */
+  inputSchema: ZodLike | JsonSchemaNode;
+  /** Provider export hint retained for clients that support deferred tools. */
+  deferLoading?: boolean;
+  /** Standard MCP behavior hints used by clients for safety and grouping. */
+  annotations?: ToolAnnotations;
   execute: (ctx: {
     args: Record<string, unknown>;
     claims: JwtClaims;
@@ -75,7 +87,12 @@ export function createMcpApp<E extends KitEnv = KitEnv>(
   opts: CreateMcpAppOptions,
 ): Hono<{ Bindings: E }> {
   const allowedOrigins = new Set(opts.corsOrigins ?? DEFAULT_CORS_ORIGINS);
-  const handlersByName = new Map(opts.toolHandlers.map((h) => [h.name, h]));
+  const handlersByName = new Map<string, ToolHandler>();
+  for (const handler of opts.toolHandlers) {
+    for (const name of handlerNames(handler.name, opts.connectorId)) {
+      handlersByName.set(name, handler);
+    }
+  }
 
   const app = new Hono<{ Bindings: E }>();
 
@@ -148,7 +165,9 @@ export function createMcpApp<E extends KitEnv = KitEnv>(
       const tools = opts.toolHandlers.map((h) => ({
         name: h.name,
         description: h.description,
-        inputSchema: zodShapeToJsonSchema(h.inputSchema),
+        inputSchema: normalizeInputSchema(h.inputSchema),
+        ...(h.annotations ? { annotations: h.annotations } : {}),
+        ...(h.deferLoading === undefined ? {} : { defer_loading: h.deferLoading }),
       }));
       return c.json({ jsonrpc: '2.0', id, result: { tools } });
     }
@@ -220,6 +239,22 @@ export function createMcpApp<E extends KitEnv = KitEnv>(
   });
 
   return app;
+}
+
+function handlerNames(name: string, connectorId: string): string[] {
+  const names = new Set([name]);
+  if (connectorId) {
+    const normalized = connectorId.replace(/-/g, '_');
+    names.add(`${normalized}_${name}`);
+    names.add(`mcp__${normalized}__${name}`);
+  }
+  if (connectorId === 'quickbooks') {
+    names.add(`qb_${name}`);
+  }
+  if (connectorId === 'retell_ai') {
+    names.add(`retell_${name}`);
+  }
+  return [...names];
 }
 
 function resolveShape(schema: ZodLike): Record<string, ZodLike> | null {
@@ -294,6 +329,21 @@ function zodShapeToJsonSchema(schema: ZodLike): JsonSchemaNode {
     }
   }
   return { type: 'object', properties, required };
+}
+
+function normalizeInputSchema(schema: ZodLike | JsonSchemaNode): JsonSchemaNode {
+  if (
+    schema &&
+    typeof schema === 'object' &&
+    'type' in schema &&
+    schema.type === 'object' &&
+    'properties' in schema &&
+    schema.properties &&
+    typeof schema.properties === 'object'
+  ) {
+    return schema as JsonSchemaNode;
+  }
+  return zodShapeToJsonSchema(schema as ZodLike);
 }
 
 function zodTypeNameToJsonType(typeName: string | undefined): string {
