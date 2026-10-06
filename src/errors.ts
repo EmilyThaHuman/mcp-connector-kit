@@ -14,6 +14,7 @@ export interface McpTextContent {
 export interface McpToolResult {
   content: McpTextContent[];
   isError?: boolean;
+  structuredContent?: Record<string, unknown>;
 }
 
 export function mcpError(message: string): McpToolResult {

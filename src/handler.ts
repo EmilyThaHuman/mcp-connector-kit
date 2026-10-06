@@ -63,6 +63,8 @@ export interface ToolHandler {
   description: string;
   /** A Zod schema or an authoritative JSON Schema object. */
   inputSchema: ZodLike | JsonSchemaNode;
+  /** Authoritative result contract, preserved verbatim in tools/list. */
+  outputSchema?: JsonSchemaNode;
   /** Provider export hint retained for clients that support deferred tools. */
   deferLoading?: boolean;
   /** Standard MCP behavior hints used by clients for safety and grouping. */
@@ -166,6 +168,7 @@ export function createMcpApp<E extends KitEnv = KitEnv>(
         name: h.name,
         description: h.description,
         inputSchema: normalizeInputSchema(h.inputSchema),
+        ...(h.outputSchema ? { outputSchema: h.outputSchema } : {}),
         ...(h.annotations ? { annotations: h.annotations } : {}),
         ...(h.deferLoading === undefined ? {} : { defer_loading: h.deferLoading }),
       }));
