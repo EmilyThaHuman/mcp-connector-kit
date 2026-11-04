@@ -83,6 +83,12 @@ export interface CreateMcpAppOptions {
   toolHandlers: ToolHandler[];
   /** Override the default CORS allowlist. */
   corsOrigins?: string[];
+  /**
+   * `jwt` (default) verifies the ZeroTwoApi JWT on every tools/call. `none` is
+   * for public read-only workers: no JWT is checked and handlers receive an
+   * anonymous placeholder identity.
+   */
+  auth?: 'jwt' | 'none';
 }
 
 export function createMcpApp<E extends KitEnv = KitEnv>(
@@ -197,9 +203,18 @@ export function createMcpApp<E extends KitEnv = KitEnv>(
       let claims: JwtClaims;
       let jwt: string;
       try {
-        const verified = await verifyJwt(c.req.raw, c.env as unknown as KitEnv);
-        claims = verified.claims;
-        jwt = verified.token;
+        if (opts.auth === 'none') {
+          claims = {
+            user_id: 'anonymous',
+            provider_id: opts.connectorId,
+            connection_id: 'anonymous',
+          };
+          jwt = '';
+        } else {
+          const verified = await verifyJwt(c.req.raw, c.env as unknown as KitEnv);
+          claims = verified.claims;
+          jwt = verified.token;
+        }
       } catch (err) {
         if (err instanceof JwtError) {
           return c.json({ jsonrpc: '2.0', id, result: mcpError(`${err.code}: ${err.message}`) });
