@@ -15,6 +15,9 @@ Workers. Each connector is a thin tool host: this kit provides the glue.
   Hono app that implements the `POST /mcp` JSON-RPC endpoint plus the SSE
   shim, dispatches `tools/list` and `tools/call`, runs JWT verification, and
   wraps every handler in an `errorBoundary`.
+  Workers created with `auth: 'none'` (public, read-only) also limit `tools/call`
+  per client IP, in isolate memory: 30 calls, refilling 2 per second, then
+  HTTP 429 with `Retry-After`. Override with `rateLimit: { burst, perSec }`.
 - **`errorBoundary(fn)` / `mcpError(text)`** — produce the standard MCP
   `{ isError: true, content: [{ type: 'text', text }] }` envelope.
 

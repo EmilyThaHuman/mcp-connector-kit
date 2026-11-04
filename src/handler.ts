@@ -89,6 +89,39 @@ export interface CreateMcpAppOptions {
    * anonymous placeholder identity.
    */
   auth?: 'jwt' | 'none';
+  /** Per-client tool-call budget for `auth: 'none'` workers. Defaults to 30 calls, refilling 2 per second. */
+  rateLimit?: RateLimit;
+}
+
+export interface RateLimit {
+  burst: number;
+  perSec: number;
+}
+
+const DEFAULT_RATE_LIMIT: RateLimit = { burst: 30, perSec: 2 };
+const MAX_TRACKED_CLIENTS = 5000;
+
+/**
+ * Token bucket per client key, in isolate memory. Public (`auth: 'none'`) workers have no
+ * caller identity, and every tool call fans out to a government API through Cloudflare's
+ * shared egress IPs, so one heavy client could get those IPs throttled for everyone.
+ * Returns 0 when the call may proceed, else the seconds to wait.
+ * ponytail: each isolate counts on its own, so this bounds one client's burst, not a flood
+ * spread across isolates; move to the Workers Rate Limiting binding if that ever shows up.
+ */
+function retryAfterSecs(buckets: Map<string, { tokens: number; at: number }>, key: string, limit: RateLimit): number {
+  const now = Date.now();
+  const bucket = buckets.get(key) ?? { tokens: limit.burst, at: now };
+  bucket.tokens = Math.min(limit.burst, bucket.tokens + ((now - bucket.at) / 1000) * limit.perSec);
+  bucket.at = now;
+  buckets.delete(key); // re-insert so the oldest-idle client is first in line for eviction
+  if (buckets.size >= MAX_TRACKED_CLIENTS) buckets.delete(buckets.keys().next().value!);
+  buckets.set(key, bucket);
+  if (bucket.tokens >= 1) {
+    bucket.tokens -= 1;
+    return 0;
+  }
+  return Math.ceil((1 - bucket.tokens) / limit.perSec);
 }
 
 export function createMcpApp<E extends KitEnv = KitEnv>(
@@ -103,6 +136,7 @@ export function createMcpApp<E extends KitEnv = KitEnv>(
   }
 
   const app = new Hono<{ Bindings: E }>();
+  const buckets = new Map<string, { tokens: number; at: number }>();
 
   app.use('*', async (c, next) => {
     const origin = c.req.header('Origin') || '';
@@ -198,6 +232,25 @@ export function createMcpApp<E extends KitEnv = KitEnv>(
           id,
           result: mcpError(`Unknown tool: ${toolName}`),
         });
+      }
+
+      if (opts.auth === 'none') {
+        const wait = retryAfterSecs(
+          buckets,
+          c.req.header('CF-Connecting-IP') ?? 'unknown',
+          opts.rateLimit ?? DEFAULT_RATE_LIMIT,
+        );
+        if (wait) {
+          return c.json(
+            {
+              jsonrpc: '2.0',
+              id,
+              error: { code: -32000, message: `Rate limited: too many tool calls from this client. Retry in ${wait}s.` },
+            },
+            429,
+            { 'Retry-After': String(wait) },
+          );
+        }
       }
 
       let claims: JwtClaims;
