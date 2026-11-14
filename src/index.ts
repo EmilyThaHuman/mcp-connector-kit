@@ -28,3 +28,5 @@ export {
   type ToolAnnotations,
   type ToolHandler,
 } from './handler.js';
+
+export { readConnectorFile, materializeConnectorFile, connectorFileRequest, type ConnectorFile } from './files.js';

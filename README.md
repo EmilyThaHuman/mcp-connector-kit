@@ -89,3 +89,5 @@ npm install
 npm run typecheck
 npm run build
 ```
+
+Email attachment helpers `readConnectorFile` and `materializeConnectorFile` reuse ZeroTwoApi's JWT-authenticated Library bridge. Inputs accept Library handles or HTTPS files (25 MB streamed download ceiling); local paths must be uploaded first. Materialization returns the original Library identity/URI and bounded Files extraction rather than attachment base64. The connector JWT is sent only to the backend, never to the file download host.
